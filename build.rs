@@ -93,5 +93,24 @@ fn main() {
         build_mac();
         println!("cargo:rustc-link-lib=framework=ApplicationServices");
     }
+
+    // Linux linkage flags copied from flutter/run.sh
+    if target_os == "linux" {
+        println!("cargo:rustc-link-search=/usr/lib/x86_64-linux-gnu");
+
+        let libs = [
+            "bz2", "lzma", "vorbis", "vorbisenc", "ogg", "opus",
+            "avcodec", "avformat", "avutil", "swscale", "swresample", "avfilter",
+            "X11", "Xext", "Xtst", "Xrandr", "Xfixes", "Xdamage", "Xcomposite",
+            "xcb", "xcb-randr", "xcb-shape", "xcb-xfixes",
+            "ssl", "crypto", "pthread", "dl", "m", "c", "gcc_s", "util",
+            "va-drm", "va", "va-x11", "va-wayland", "vdpau"
+        ];
+
+        for lib in libs.iter() {
+            println!("cargo:rustc-link-lib={}", lib);
+        }
+    }
+
     println!("cargo:rerun-if-changed=build.rs");
 }

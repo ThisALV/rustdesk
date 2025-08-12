@@ -1,4 +1,4 @@
-use super::{gtk_sudo, CursorData, ResultType};
+use super::{gtk_sudo, wayland_cursor, CursorData, ResultType};
 use desktop::Desktop;
 use hbb_common::config::keys::OPTION_ALLOW_LINUX_HEADLESS;
 pub use hbb_common::platform::linux::*;
@@ -121,6 +121,27 @@ fn sleep_millis(millis: u64) {
 }
 
 pub fn get_cursor_pos() -> Option<(i32, i32)> {
+    // Try native Wayland capture first if the feature is enabled
+    #[cfg(feature = "wayland")]
+    {
+        if !is_x11() {
+            // Try native Wayland capture
+            match wayland_cursor::get_wayland_cursor_pos() {
+                Ok(Some(pos)) => {
+                    log::debug!("Got cursor position from native Wayland: {:?}", pos);
+                    return Some(pos);
+                }
+                Ok(None) => {
+                    log::debug!("No cursor position available from native Wayland");
+                }
+                Err(e) => {
+                    log::debug!("Wayland cursor position capture failed, falling back to X11: {}", e);
+                }
+            }
+        }
+    }
+
+    // Fallback to X11/XWayland
     let mut res = None;
     XDO.with(|xdo| {
         if let Ok(xdo) = xdo.try_borrow_mut() {
@@ -185,6 +206,28 @@ pub fn get_focused_display(displays: Vec<DisplayInfo>) -> Option<usize> {
 }
 
 pub fn get_cursor() -> ResultType<Option<u64>> {
+    // Try native Wayland capture first if the feature is enabled
+    #[cfg(feature = "wayland")]
+    {
+        // TODO removes debug
+        if !is_x11() {
+            // Try native Wayland capture
+            match wayland_cursor::get_wayland_cursor() {
+                Ok(Some(cursor_id)) => {
+                    log::debug!("Got cursor from native Wayland: {}", cursor_id);
+                    return Ok(Some(cursor_id));
+                }
+                Ok(None) => {
+                    log::debug!("No cursor available from native Wayland");
+                }
+                Err(e) => {
+                    log::debug!("Wayland cursor capture failed, falling back to X11: {}", e);
+                }
+            }
+        }
+    }
+
+    // Fallback to X11/XWayland
     let mut res = None;
     DISPLAY.with(|conn| {
         if let Ok(d) = conn.try_borrow_mut() {
@@ -203,6 +246,24 @@ pub fn get_cursor() -> ResultType<Option<u64>> {
 }
 
 pub fn get_cursor_data(hcursor: u64) -> ResultType<CursorData> {
+    // Try native Wayland capture first if the feature is enabled
+    #[cfg(feature = "wayland")]
+    {
+        if !is_x11() {
+            // Try native Wayland capture
+            match wayland_cursor::get_wayland_cursor_data(hcursor) {
+                Ok(cursor_data) => {
+                    log::debug!("Got cursor data from native Wayland for ID: {}", hcursor);
+                    return Ok(cursor_data);
+                }
+                Err(e) => {
+                    log::debug!("Wayland cursor data capture failed, falling back to X11: {}", e);
+                }
+            }
+        }
+    }
+
+    // Fallback to X11/XWayland
     let mut res = None;
     DISPLAY.with(|conn| {
         if let Ok(ref mut d) = conn.try_borrow_mut() {
