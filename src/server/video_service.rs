@@ -46,6 +46,7 @@ use scrap::vram::{VRamEncoder, VRamEncoderConfig};
 use scrap::Capturer;
 use scrap::{
     aom::AomEncoderConfig,
+    mjpeg::MjpegEncoderConfig,
     codec::{Encoder, EncoderCfg},
     record::{Recorder, RecorderContext},
     vpxcodec::{VpxEncoderConfig, VpxVideoCodecId},
@@ -939,6 +940,12 @@ fn get_encoder_config(
         CodecFormat::AV1 => EncoderCfg::AOM(AomEncoderConfig {
             width: c.width as _,
             height: c.height as _,
+            quality,
+            keyframe_interval,
+        }),
+        CodecFormat::MJPEG => EncoderCfg::MJPEG(MjpegEncoderConfig {
+            width: c.width,
+            height: c.height,
             quality,
             keyframe_interval,
         }),

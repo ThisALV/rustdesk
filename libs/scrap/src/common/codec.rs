@@ -14,6 +14,8 @@ use crate::vram::*;
 use crate::{
     aom::{self, AomDecoder, AomEncoder, AomEncoderConfig},
     common::GoogleImage,
+    mjpeg::{MjpegEncoder, MjpegEncoderConfig},
+    mjpeg_decoder::MjpegDecoder,
     vpxcodec::{self, VpxDecoder, VpxDecoderConfig, VpxEncoder, VpxEncoderConfig, VpxVideoCodecId},
     CodecFormat, EncodeInput, EncodeYuvFormat, ImageRgb, ImageTexture,
 };
@@ -44,6 +46,7 @@ pub const ENCODE_NEED_SWITCH: &'static str = "ENCODE_NEED_SWITCH";
 pub enum EncoderCfg {
     VPX(VpxEncoderConfig),
     AOM(AomEncoderConfig),
+    MJPEG(MjpegEncoderConfig),
     #[cfg(feature = "hwcodec")]
     HWRAM(HwRamEncoderConfig),
     #[cfg(feature = "vram")]
@@ -133,7 +136,9 @@ impl Encoder {
             EncoderCfg::AOM(_) => Ok(Encoder {
                 codec: Box::new(AomEncoder::new(config, i444)?),
             }),
-
+            EncoderCfg::MJPEG(_) => Ok(Encoder {
+                codec: Box::new(MjpegEncoder::new(config, i444)?),
+            }),
             #[cfg(feature = "hwcodec")]
             EncoderCfg::HWRAM(_) => match HwRamEncoder::new(config, i444) {
                 Ok(hw) => Ok(Encoder {
@@ -358,6 +363,7 @@ impl Encoder {
                 VpxVideoCodecId::VP9 => CodecFormat::VP9,
             },
             EncoderCfg::AOM(_) => CodecFormat::AV1,
+            EncoderCfg::MJPEG(_) => CodecFormat::MJPEG,
             #[cfg(feature = "hwcodec")]
             EncoderCfg::HWRAM(hw) => {
                 let name = hw.name.to_lowercase();
@@ -406,6 +412,7 @@ impl Encoder {
             EncoderCfg::AOM(_) => decodings.iter().all(|d| d.1.i444.av1),
             #[cfg(feature = "hwcodec")]
             EncoderCfg::HWRAM(_) => false,
+            EncoderCfg::MJPEG(_) => decodings.iter().all(|d| d.1.i444.mjpeg),
             #[cfg(feature = "vram")]
             EncoderCfg::VRAM(_) => false,
         };
@@ -430,6 +437,7 @@ impl Decoder {
             i444: Some(CodecAbility {
                 vp9: true,
                 av1: true,
+                mjpeg: true,
                 ..Default::default()
             })
             .into(),
@@ -580,9 +588,14 @@ impl Decoder {
                     valid = h265_media_codec.is_some();
                 }
             }
+            CodecFormat::MJPEG => {
+                // MJPEG is handled differently - each frame is decoded independently
+                // No persistent decoder state is needed
+                valid = true;
+            },
             CodecFormat::Unknown => {
                 log::error!("unknown codec format, cannot create decoder");
-            }
+            },
         }
         if !valid {
             log::error!("failed to create {format:?} decoder");
@@ -697,6 +710,10 @@ impl Decoder {
                     Err(anyhow!("don't support h265!"))
                 }
             }
+            video_frame::Union::Mjpegs(mjpegs) => {
+                *chroma = Some(Chroma::I420);
+                Decoder::handle_mjpegs_video_frame(mjpegs, rgb)
+            }
             _ => Err(anyhow!("unsupported video frame type!")),
         }
     }
@@ -807,6 +824,90 @@ impl Decoder {
             return decoder.decode(&h264.data, rgb);
         }
         return Ok(false);
+    }
+
+    // rgb [in/out] fmt and stride must be set in ImageRgb
+    fn handle_mjpegs_video_frame(
+        mjpegs: &EncodedVideoFrames,
+        rgb: &mut ImageRgb,
+    ) -> ResultType<bool> {
+        if mjpegs.frames.is_empty() {
+            return Ok(false);
+        }
+
+        // For MJPEG, we decode the last frame since each frame is independent
+        let last_frame = &mjpegs.frames[mjpegs.frames.len() - 1];
+
+        // Create a temporary MJPEG decoder for this frame
+        let mut decoder = MjpegDecoder::new()?;
+
+        // Decode the JPEG data to RGB
+        let rgb_data = decoder.decode_jpeg_to_rgb(&last_frame.data)?;
+        
+        if decoder.width() == 0 || decoder.height() == 0 {
+            return Ok(false);
+        }
+
+        // Update the output RGB buffer with decoded data
+        rgb.w = decoder.width();
+        rgb.h = decoder.height();
+        
+        // Calculate bytes per row based on format
+        let bytes_per_pixel = match rgb.fmt() {
+            crate::ImageFormat::Raw => 3,
+            crate::ImageFormat::ARGB | crate::ImageFormat::ABGR => 4,
+        };
+        let bytes_per_row = (rgb.w * bytes_per_pixel + rgb.align() - 1) & !(rgb.align() - 1);
+        rgb.raw.resize(rgb.h * bytes_per_row, 0);
+
+        // Convert RGB to the target format
+        match rgb.fmt() {
+            crate::ImageFormat::Raw => {
+                // Direct RGB copy
+                if rgb_data.len() == rgb.w * rgb.h * 3 {
+                    for y in 0..rgb.h {
+                        let src_start = y * rgb.w * 3;
+                        let dst_start = y * bytes_per_row;
+                        let copy_len = std::cmp::min(rgb.w * 3, bytes_per_row);
+                        if dst_start + copy_len <= rgb.raw.len() && src_start + copy_len <= rgb_data.len() {
+                            rgb.raw[dst_start..dst_start + copy_len]
+                                .copy_from_slice(&rgb_data[src_start..src_start + copy_len]);
+                        }
+                    }
+                }
+            }
+            crate::ImageFormat::ARGB | crate::ImageFormat::ABGR => {
+                // Convert RGB to ARGB/ABGR
+                if rgb_data.len() == rgb.w * rgb.h * 3 {
+                    for y in 0..rgb.h {
+                        for x in 0..rgb.w {
+                            let src_idx = (y * rgb.w + x) * 3;
+                            let dst_idx = y * bytes_per_row + x * 4;
+
+                            if src_idx + 2 < rgb_data.len() && dst_idx + 3 < rgb.raw.len() {
+                                match rgb.fmt() {
+                                    crate::ImageFormat::ARGB => {
+                                        rgb.raw[dst_idx] = 255; // A
+                                        rgb.raw[dst_idx + 1] = rgb_data[src_idx]; // R
+                                        rgb.raw[dst_idx + 2] = rgb_data[src_idx + 1]; // G
+                                        rgb.raw[dst_idx + 3] = rgb_data[src_idx + 2]; // B
+                                    }
+                                    crate::ImageFormat::ABGR => {
+                                        rgb.raw[dst_idx] = 255; // A
+                                        rgb.raw[dst_idx + 1] = rgb_data[src_idx + 2]; // B
+                                        rgb.raw[dst_idx + 2] = rgb_data[src_idx + 1]; // G
+                                        rgb.raw[dst_idx + 3] = rgb_data[src_idx]; // R
+                                    }
+                                    _ => unreachable!(),
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(true)
     }
 
     fn preference(id: Option<&str>) -> (PreferCodec, Chroma) {

@@ -1809,6 +1809,11 @@ class _DisplayState extends State<_Display> {
           groupValue: groupValue,
           label: 'AV1',
           onChanged: isOptFixed ? null : onChanged),
+      _Radio(context,
+          value: 'mjpeg',
+          groupValue: groupValue,
+          label: 'MJPEG',
+          onChanged: isOptFixed ? null : onChanged),
       ...hwRadios,
     ]);
   }

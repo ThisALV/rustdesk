@@ -54,6 +54,9 @@ pub mod camera;
 pub mod record;
 mod vpx;
 
+pub mod mjpeg;
+pub mod mjpeg_decoder;
+
 #[repr(usize)]
 #[derive(Debug, Copy, Clone)]
 pub enum ImageFormat {
@@ -290,6 +293,7 @@ pub enum CodecName {
     H265RAM(String),
     H264VRAM,
     H265VRAM,
+    MJPEG,
 }
 
 #[derive(PartialEq, Debug, Clone, Copy)]
@@ -299,6 +303,7 @@ pub enum CodecFormat {
     AV1,
     H264,
     H265,
+    MJPEG,
     Unknown,
 }
 
@@ -336,6 +341,7 @@ impl From<&CodecName> for CodecFormat {
             CodecName::AV1 => Self::AV1,
             CodecName::H264RAM(_) | CodecName::H264VRAM => Self::H264,
             CodecName::H265RAM(_) | CodecName::H265VRAM => Self::H265,
+            CodecName::MJPEG => Self::MJPEG
         }
     }
 }
@@ -348,6 +354,7 @@ impl ToString for CodecFormat {
             CodecFormat::AV1 => "AV1".into(),
             CodecFormat::H264 => "H264".into(),
             CodecFormat::H265 => "H265".into(),
+            CodecFormat::MJPEG => "MJPEG".into(),
             CodecFormat::Unknown => "Unknown".into(),
         }
     }
