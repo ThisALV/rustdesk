@@ -663,6 +663,7 @@ fn on_create_session_response(
             // https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.ScreenCast.html
             // args.insert("multiple".into(), Variant(Box::new(true)));
             args.insert("types".into(), Variant(Box::new(1u32))); //| 2u32)));
+            args.insert("cursor_mode".into(), Variant(Box::new(1u32)));
 
             let path = portal.select_sources(ses.clone(), args)?;
             handle_response(
@@ -769,6 +770,7 @@ fn on_select_sources_response(
         if is_server_running() {
             path = screencast_portal::start(&portal, session.clone(), "", args)?;
         } else {
+            args.insert("cursor_mode".into(), Variant(Box::new(1u32)));
             path = remote_desktop_portal::start(&portal, session.clone(), "", args)?;
         }
         handle_response(

@@ -271,7 +271,7 @@ pub fn is_cursor_embedded() -> bool {
     if is_x11() {
         x11::IS_CURSOR_EMBEDDED
     } else {
-        false
+        true
     }
 }
 
