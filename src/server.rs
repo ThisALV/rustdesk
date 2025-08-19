@@ -50,6 +50,7 @@ pub mod rdp_input;
 pub mod dbus;
 #[cfg(not(target_os = "android"))]
 pub mod input_service;
+pub mod cursor_events;
 } else {
 mod clipboard_service {
 pub const NAME: &'static str = "";

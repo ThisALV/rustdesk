@@ -18,7 +18,7 @@
 // to-do:
 // https://slhck.info/video/2017/03/01/rate-control.html
 
-use super::{display_service::check_display_changed, service::ServiceTmpl, video_qos::VideoQoS, *};
+use super::{display_service::check_display_changed, service::ServiceTmpl, video_qos::VideoQoS, cursor_events::*, *};
 #[cfg(target_os = "linux")]
 use crate::common::SimpleCallOnReturn;
 #[cfg(target_os = "linux")]
@@ -646,6 +646,9 @@ fn run(vs: VideoService) -> ResultType<()> {
             Ok(frame) => {
                 repeat_encode_counter = 0;
                 if frame.valid() {
+                    // Extract and publish cursor metadata from video frame
+                    extract_and_publish_cursor_metadata(&frame, display_idx);
+
                     let screenshot = SCREENSHOTS.lock().unwrap().remove(&display_idx);
                     if let Some(mut screenshot) = screenshot {
                         let restore_vram = screenshot.restore_vram;
@@ -1337,4 +1340,27 @@ fn handle_screenshot(screenshot: Screenshot, msg: String, w: usize, h: usize, da
     {
         log::error!("Failed to send screenshot, {}", e);
     }
+}
+
+/// Extract and publish cursor metadata from video frame
+fn extract_and_publish_cursor_metadata(frame: &scrap::Frame, display_idx: usize) {
+    // Extract cursor metadata based on frame type
+    let mut cursor_metadata = CursorMetadata::default();
+    cursor_metadata.timestamp = hbb_common::get_time() as u64;
+
+    match frame {
+        scrap::Frame::PixelBuffer(_) => {
+            // For pixel buffers, we can try to extract cursor info
+            // if available in capturer metadata
+            cursor_metadata.visible = true;
+        }
+        scrap::Frame::Texture(_) => {
+            // For textures (especially with pipewire), cursor metadata
+            // can be embedded in stream properties
+            cursor_metadata.visible = true;
+        }
+    }
+
+    // Publish metadata via event sink system
+    publish_cursor_metadata(cursor_metadata);
 }

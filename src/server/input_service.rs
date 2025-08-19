@@ -1,6 +1,7 @@
 #[cfg(target_os = "linux")]
 use super::rdp_input::client::{RdpInputKeyboard, RdpInputMouse};
 use super::*;
+use super::cursor_events::*;
 #[cfg(target_os = "macos")]
 use crate::common::is_server;
 use crate::input::*;
@@ -1741,6 +1742,55 @@ pub fn handle_key_(evt: &KeyEvent) {
             legacy_keyboard_mode(evt);
         }
     }
+}
+
+/// Cursor service that listens to cursor metadata events
+pub struct CursorMetadataListener {
+    name: String,
+}
+
+impl CursorMetadataListener {
+    pub fn new(name: String) -> Self {
+        Self { name }
+    }
+}
+
+impl CursorEventSink for CursorMetadataListener {
+    fn on_cursor_metadata_update(&self, metadata: &CursorMetadata) {
+        log::debug!(
+            "Cursor service '{}' received metadata: position={:?}, visible={}, timestamp={}",
+            self.name,
+            metadata.position,
+            metadata.visible,
+            metadata.timestamp
+        );
+
+        // Process cursor metadata as needed
+        if let Some((x, y)) = metadata.position {
+            // Update cursor position if necessary
+            update_last_cursor_pos(x, y);
+        }
+
+        // If metadata contains cursor shape information
+        if let Some(ref shape_data) = metadata.shape_data {
+            log::trace!("Received {} bytes of cursor shape data", shape_data.len());
+            // Process cursor shape data
+        }
+    }
+}
+
+/// Initialize the event sink system for video-cursor service communication
+pub fn initialize_cursor_event_system() {
+    // Start the cursor manager event loop
+    tokio::spawn(async {
+        CURSOR_EVENT_MANAGER.start_event_loop().await;
+    });
+
+    // Create and register a listener for the cursor service
+    let cursor_listener = Arc::new(CursorMetadataListener::new("cursor_service".to_string()));
+    register_cursor_sink(cursor_listener);
+
+    log::info!("Cursor event sink system initialized");
 }
 
 #[tokio::main(flavor = "current_thread")]
