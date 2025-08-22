@@ -21,6 +21,7 @@ use hbb_common::config;
 
 use super::capturable::PixelProvider;
 use super::capturable::{Capturable, Recorder};
+use super::cursor_bridge::{WaylandCursorData, convert_pipewire_cursor_data, notify_cursor_update, notify_cursor_position_update};
 use super::remote_desktop_portal::OrgFreedesktopPortalRemoteDesktop as remote_desktop_portal;
 use super::request_portal::OrgFreedesktopPortalRequestResponse;
 use super::screencast_portal::OrgFreedesktopPortalScreenCast as screencast_portal;
@@ -220,7 +221,7 @@ impl PipeWireRecorder {
         let src = gst::ElementFactory::make("pipewiresrc", None)?;
         src.set_property("fd", &capturable.fd.as_raw_fd())?;
         src.set_property("path", &format!("{}", capturable.path))?;
-        src.set_property("keepalive_time", &1_000.as_raw_fd())?;
+        src.set_property("keepalive_time", &1_000)?;
 
         // For some reason pipewire blocks on destruction of AppSink if this is not set to true,
         // see: https://gitlab.freedesktop.org/pipewire/pipewire/-/issues/982
@@ -260,6 +261,98 @@ impl PipeWireRecorder {
             saved_raw_data: Vec::new(),
         })
     }
+
+    /// Processes cursor metadata from a GStreamer/PipeWire buffer
+    fn process_cursor_metadata(&mut self, buffer: &gst::Buffer) {
+        // Search for cursor metadata in PipeWire buffer
+        // Cursor metadata is usually attached as custom metadata
+
+        // Attempt to extract cursor metadata from custom metadata
+        let meta_iter = buffer.iter_meta::<gst::Meta>();
+        for meta in meta_iter {
+            // Search for metadata of type "cursor" or similar
+            if let Some(structure) = self.extract_cursor_structure(&meta) {
+                if let Ok(cursor_data) = self.parse_cursor_metadata(&structure) {
+                    // Notify bridge of new cursor data
+                    notify_cursor_update(cursor_data);
+                }
+            }
+        }
+
+        // Fallback: attempt extraction from buffer properties
+        self.try_extract_cursor_from_buffer_properties(buffer);
+    }
+
+    /// Extracts cursor metadata structure from a meta
+    fn extract_cursor_structure(&self, _meta: &gst::Meta) -> Option<gst::Structure> {
+        // Cursor metadata in PipeWire is often stored as custom meta
+        // with a specific name like "cursor", "pointer", etc.
+
+        // This implementation is hypothetical as the exact API depends on PipeWire version
+        // and how the Wayland compositor exposes cursor metadata
+
+        // For now, we return None as this functionality requires
+        // specific implementation for the Wayland compositor being used
+        None
+    }
+
+    /// Parses cursor metadata from a GStreamer structure
+    fn parse_cursor_metadata(&self, structure: &gst::Structure) -> Result<WaylandCursorData, Box<dyn Error>> {
+        // Extract cursor properties from structure
+        let id = structure.get::<u64>("cursor_id").ok().flatten().unwrap_or(0);
+        let hotx = structure.get::<i32>("hotspot_x").ok().flatten().unwrap_or(0);
+        let hoty = structure.get::<i32>("hotspot_y").ok().flatten().unwrap_or(0);
+        let width = structure.get::<u32>("width").ok().flatten().unwrap_or(0);
+        let height = structure.get::<u32>("height").ok().flatten().unwrap_or(0);
+        let pos_x = structure.get::<i32>("position_x").ok().flatten().unwrap_or(0);
+        let pos_y = structure.get::<i32>("position_y").ok().flatten().unwrap_or(0);
+        let visible = structure.get::<bool>("visible").ok().flatten().unwrap_or(true);
+
+        // Extract cursor pixel data
+        let pixels_data = structure.get::<gst::Buffer>("pixels")
+            .ok()
+            .flatten()
+            .ok_or("No pixels buffer found")?;
+
+        let mapped_buffer = pixels_data.into_mapped_buffer_readable()
+            .map_err(|_| "Failed to map cursor buffer")?;
+
+        // Convert pixels from PipeWire format (usually ARGB)
+        let pixel_slice = mapped_buffer.as_slice();
+        let pixels: Vec<u32> = pixel_slice
+            .chunks_exact(4)
+            .map(|chunk| {
+                u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]])
+            })
+            .collect();
+
+        let cursor_data = convert_pipewire_cursor_data(
+            id,
+            hotx,
+            hoty,
+            width,
+            height,
+            &pixels,
+            (pos_x, pos_y),
+            visible,
+        );
+
+        Ok(cursor_data)
+    }
+
+    /// Attempts to extract cursor properties from buffer properties
+    fn try_extract_cursor_from_buffer_properties(&self, _buffer: &gst::Buffer) {
+        // Search buffer custom properties for cursor information
+        // This method is used as fallback if explicit metadata is not available
+
+        // Note: This implementation heavily depends on how the Wayland compositor
+        // and PipeWire expose cursor information. Different compositors may
+        // use different approaches.
+
+        // For now, we leave this method empty as the implementation
+        // requires specific knowledge of the metadata format used
+        // by the current running Wayland/PipeWire system
+    }
 }
 
 impl Recorder for PipeWireRecorder {
@@ -285,6 +378,10 @@ impl Recorder for PipeWireRecorder {
             let buf = sample
                 .get_buffer_owned()
                 .ok_or_else(|| GStreamerError("Failed to get owned buffer.".into()))?;
+
+            // Process cursor metadata from PipeWire
+            self.process_cursor_metadata(&buf);
+
             let mut crop = buf
                 .get_meta::<gstreamer_video::VideoCropMeta>()
                 .map(|m| m.get_rect());

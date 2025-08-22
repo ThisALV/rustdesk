@@ -121,6 +121,15 @@ fn sleep_millis(millis: u64) {
 }
 
 pub fn get_cursor_pos() -> Option<(i32, i32)> {
+    // If we are under Wayland, use the Wayland cursor bridge
+    if !*IS_X11 {
+        // Import Wayland cursor bridge
+        if let Ok(bridge) = crate::try_get_wayland_cursor_bridge() {
+            return bridge.get_cursor_position();
+        }
+    }
+
+    // Fallback to X11 if Wayland is not available or in case of error
     let mut res = None;
     XDO.with(|xdo| {
         if let Ok(xdo) = xdo.try_borrow_mut() {
@@ -185,6 +194,14 @@ pub fn get_focused_display(displays: Vec<DisplayInfo>) -> Option<usize> {
 }
 
 pub fn get_cursor() -> ResultType<Option<u64>> {
+    // If we are under Wayland, use the Wayland cursor bridge
+    if !*IS_X11 {
+        if let Ok(bridge) = crate::try_get_wayland_cursor_bridge() {
+            return Ok(bridge.get_current_cursor_id());
+        }
+    }
+
+    // Fallback to X11 if Wayland is not available or in case of error
     let mut res = None;
     DISPLAY.with(|conn| {
         if let Ok(d) = conn.try_borrow_mut() {
@@ -203,6 +220,24 @@ pub fn get_cursor() -> ResultType<Option<u64>> {
 }
 
 pub fn get_cursor_data(hcursor: u64) -> ResultType<CursorData> {
+    // If we are under Wayland, use the Wayland cursor bridge
+    if !*IS_X11 {
+        if let Ok(bridge) = crate::try_get_wayland_cursor_bridge() {
+            if let Some(wayland_cursor) = bridge.get_cursor_data(hcursor) {
+                // Convert Wayland data to CursorData format
+                let mut cd = CursorData::default();
+                cd.id = wayland_cursor.id;
+                cd.hotx = wayland_cursor.hotx;
+                cd.hoty = wayland_cursor.hoty;
+                cd.width = wayland_cursor.width as i32;
+                cd.height = wayland_cursor.height as i32;
+                cd.colors = wayland_cursor.colors.into();
+                return Ok(cd);
+            }
+        }
+    }
+
+    // Fallback to X11 if Wayland is not available or in case of error
     let mut res = None;
     DISPLAY.with(|conn| {
         if let Ok(ref mut d) = conn.try_borrow_mut() {

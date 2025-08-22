@@ -73,3 +73,10 @@ pub mod privacy_mode;
 pub mod virtual_display_manager;
 
 mod kcp_stream;
+
+/// Fonction helper pour accéder au bridge de curseur Wayland
+#[cfg(target_os = "linux")]
+pub fn try_get_wayland_cursor_bridge() -> Result<&'static scrap::wayland::cursor_bridge::CursorBridge, Box<dyn std::error::Error>> {
+    use scrap::wayland::cursor_bridge::WAYLAND_CURSOR_BRIDGE;
+    Ok(&*WAYLAND_CURSOR_BRIDGE)
+}
